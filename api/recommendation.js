@@ -43,7 +43,8 @@ export default async function handler(req, res) {
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'gpt-4',
+        // Use gpt-3.5-turbo for compatibility; some keys may not have access to gpt-4
+        model: 'gpt-3.5-turbo',
         messages: [
           { role: 'system', content: 'Du är en tradingassistent som ger korta och tydliga rekommendationer baserat på prisdata.' },
           { role: 'user', content: prompt },
