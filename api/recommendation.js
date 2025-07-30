@@ -23,44 +23,63 @@ export default async function handler(req, res) {
     }
 
     const apiKey = process.env.OPENAI_API_KEY;
-
     if (!apiKey) {
       return res.status(500).json({ error: 'OPENAI_API_KEY is not configured' });
     }
 
-    // Compose a succinct summary of the closing prices for the prompt
-    const closes = data.map((c) => c.c).slice(-30); // last 30 closes
-    const summary = closes.join(', ');
-
+    // Extract closing prices and build a summary for the prompt
+    const closes = data.map((c) => c.c).filter((v) => typeof v === 'number');
+    const recentCloses = closes.slice(-30);
+    const summary = recentCloses.join(', ');
     const prompt = `Här är de senaste stängningspriserna för ${ticker}: ${summary}. ` +
       `Baserat på denna trend, rekommenderar du att köpa, sälja eller avvakta? ` +
       `Svar på svenska och motivera kort varför.`;
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        // Use gpt-3.5-turbo for compatibility; some keys may not have access to gpt-4
-        model: 'gpt-3.5-turbo',
-        messages: [
-          { role: 'system', content: 'Du är en tradingassistent som ger korta och tydliga rekommendationer baserat på prisdata.' },
-          { role: 'user', content: prompt },
-        ],
-        max_tokens: 150,
-        temperature: 0.7,
-      }),
-    });
+    let message;
+    try {
+      // Attempt to call OpenAI API
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-3.5-turbo',
+          messages: [
+            { role: 'system', content: 'Du är en tradingassistent som ger korta och tydliga rekommendationer baserat på prisdata.' },
+            { role: 'user', content: prompt },
+          ],
+          max_tokens: 150,
+          temperature: 0.7,
+        }),
+      });
 
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`OpenAI API error: ${response.status} - ${errText}`);
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`OpenAI API error: ${response.status} - ${errText}`);
+      }
+      const json = await response.json();
+      message = json.choices?.[0]?.message?.content?.trim();
+    } catch (apiError) {
+      // If OpenAI fails (quota exceeded or model unavailable), compute a simple trend-based fallback
+      const first = recentCloses[0];
+      const last = recentCloses[recentCloses.length - 1];
+      if (typeof first === 'number' && typeof last === 'number') {
+        const diff = last - first;
+        if (diff > 0) {
+          message = 'Trenden är uppåtgående, vilket tyder på en köpsignal.';
+        } else if (diff < 0) {
+          message = 'Priset sjunker, så en säljsignal är rimlig just nu.';
+        } else {
+          message = 'Priset är oförändrat, det kan vara klokt att avvakta.';
+        }
+      } else {
+        message = 'Det gick inte att generera en rekommendation baserat på tillgänglig data.';
+      }
     }
-    const json = await response.json();
-    const message = json.choices?.[0]?.message?.content || 'Ingen rekommendation';
-    return res.status(200).json({ recommendation: message });
+
+    return res.status(200).json({ recommendation: message || 'Ingen rekommendation' });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
